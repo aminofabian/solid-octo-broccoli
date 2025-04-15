@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1 class="page-title">Blog Posts</h1>
+<div class="blog-list">
+    {% for blog in blogs %}
+    <div class="blog-post">
+        <h2><a href="{% url 'blog-detail' blog.pk %}">{{ blog.title }}</a></h2>
+        <p>{{ blog.content|truncatewords:30|linebreaks }}</p>
+        <div class="blog-meta">
+            <small>
+                <i class="far fa-calendar"></i> 
+                Created: {{ blog.created_at|date:"F j, Y, g:i a" }}
+            </small>
+        </div>
+    </div>
+    {% empty %}
+    <div class="empty-message">
+        <h3>No blog posts yet.</h3>
+        <p>Check back later for new content!</p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %} 
