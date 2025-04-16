@@ -1,6 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from .models import Blog
@@ -27,54 +28,83 @@ def index(request):
     return Response({'message': 'Hello, World!'})   
 
 
+@swagger_auto_schema(
+    method='get',
+    operation_description="List all blog posts with optional filtering",
+    manual_parameters=[
+        openapi.Parameter('search', openapi.IN_QUERY, description="Search in title and content", type=openapi.TYPE_STRING),
+        openapi.Parameter('sort', openapi.IN_QUERY, description="Sort by field (created_at, -created_at, title, -title)", type=openapi.TYPE_STRING),
+    ],
+    responses={200: BlogSerializer(many=True)}
+)
 @api_view(['GET'])
 def get_blogs(request):
     """
-    A simple view that returns all blogs
+    List all blogs with optional search and sorting
     """
-    blogs = Blog.objects.all()
-    serializer = BlogSerializer(blogs, many=True)
-    return Response(serializer.data)
+    queryset = Blog.objects.all()
+    
+    # Search functionality
+    search_query = request.query_params.get('search', '')
+    if search_query:
+        queryset = queryset.filter(title__icontains=search_query) | queryset.filter(content__icontains=search_query)
+    
+    # Sorting
+    sort_by = request.query_params.get('sort', '-created_at')
+    if sort_by in ['created_at', '-created_at', 'title', '-title']:
+        queryset = queryset.order_by(sort_by)
+    
+    serializer = BlogSerializer(queryset, many=True)
+    return Response({
+        'count': queryset.count(),
+        'results': serializer.data
+    })
 
 def blog_list(request):
     blogs = Blog.objects.all().order_by('-created_at')
     return render(request, 'blogapiapp/blog_list.html', {'blogs': blogs})
 
-def blog_detail(request, pk):
-    blog = get_object_or_404(Blog, pk=pk)
-    return render(request, 'blogapiapp/blog_detail.html', {'blog': blog})
-
 @swagger_auto_schema(
-    method='get',
-    operation_description="Retrieve a specific blog post by ID",
+    methods=['get', 'put', 'delete'],
+    operation_description="Retrieve, update or delete a blog post",
+    request_body=BlogUpdateSerializer,
     responses={
         200: BlogSerializer,
         404: openapi.Response(
             description="Blog not found",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'error': openapi.Schema(type=openapi.TYPE_STRING)
-                }
-            )
+            examples={"application/json": {"error": "Blog not found"}}
+        ),
+        400: openapi.Response(
+            description="Bad Request",
+            examples={"application/json": {"title": ["This field is required."]}}
         )
     }
 )
-@api_view(['GET'])
-def get_blog_detail(request, pk):
+@api_view(['GET', 'PUT', 'DELETE'])
+def blog_detail(request, pk):
     """
-    Retrieve a blog post by its ID
+    Retrieve, update or delete a blog post
     """
     try:
         blog = Blog.objects.get(pk=pk)
+    except Blog.DoesNotExist:
+        return Response({"error": "Blog not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'GET':
         serializer = BlogSerializer(blog)
         return Response(serializer.data)
-    except Blog.DoesNotExist:
-        return Response(
-            {"error": "Blog not found"}, 
-            status=404
-        )
 
+    elif request.method == 'PUT':
+        serializer = BlogUpdateSerializer(blog, data=request.data)
+        if serializer.is_valid():
+            blog = serializer.save()
+            response_serializer = BlogSerializer(blog)
+            return Response(response_serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    elif request.method == 'DELETE':
+        blog.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 @swagger_auto_schema(
     method='post',
@@ -83,12 +113,12 @@ def get_blog_detail(request, pk):
         201: BlogSerializer,
         400: openapi.Response(
             description="Bad Request",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+            examples={
+                "application/json": {
+                    "title": ["This field is required."],
+                    "content": ["This field is required."]
                 }
-            )
+            }
         )
     }
 )
@@ -101,33 +131,8 @@ def create_blog(request):
     if serializer.is_valid():
         blog = serializer.save()
         response_serializer = BlogSerializer(blog)
-        return Response(response_serializer.data, status=201)
-    return Response(serializer.errors, status=400)
-
-@swagger_auto_schema(
-    method='put',
-    request_body=BlogUpdateSerializer,
-    responses={
-        200: BlogSerializer,
-        404: openapi.Response(description="Blog not found")
-    }
-)
-@api_view(['PUT'])
-def update_blog(request, pk):
-    """
-    Update a blog post
-    """
-    try:
-        blog = Blog.objects.get(pk=pk)
-    except Blog.DoesNotExist:
-        return Response({"error": "Blog not found"}, status=404)
-
-    serializer = BlogUpdateSerializer(blog, data=request.data)
-    if serializer.is_valid():
-        blog = serializer.save()
-        response_serializer = BlogSerializer(blog)
-        return Response(response_serializer.data)
-    return Response(serializer.errors, status=400)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @swagger_auto_schema(
     method='delete',
@@ -147,5 +152,5 @@ def delete_blog(request, pk):
         return Response({"error": "Blog not found"}, status=404)
     
     blog.delete()
-    return Response(status=204)
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
